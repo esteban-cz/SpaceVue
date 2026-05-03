@@ -12,7 +12,7 @@
 #endif
 
 #ifndef VERSION_MICRO
-#define VERSION_MICRO 0
+#define VERSION_MICRO 1
 #endif
 
 static constexpr int SCREEN_W = 1280;
@@ -37,16 +37,28 @@ struct Fonts {
     TTF_Font* small;
 };
 
+struct Theme {
+    const char* name;
+    SDL_Color accent;
+};
+
 static constexpr SDL_Color COLOR_BG = {18, 22, 29, 255};
 static constexpr SDL_Color COLOR_PANEL = {30, 36, 46, 255};
 static constexpr SDL_Color COLOR_PANEL_2 = {38, 45, 57, 255};
 static constexpr SDL_Color COLOR_TEXT = {239, 243, 248, 255};
 static constexpr SDL_Color COLOR_MUTED = {151, 162, 178, 255};
 static constexpr SDL_Color COLOR_DIM = {94, 105, 120, 255};
-static constexpr SDL_Color COLOR_ACCENT = {73, 190, 170, 255};
 static constexpr SDL_Color COLOR_WARN = {238, 184, 82, 255};
 static constexpr SDL_Color COLOR_DANGER = {231, 91, 91, 255};
 static constexpr SDL_Color COLOR_BAR_BG = {52, 61, 75, 255};
+
+static constexpr Theme THEMES[] = {
+    {"Cyan", {73, 190, 170, 255}},
+    {"Red", {231, 91, 91, 255}},
+    {"Magenta", {210, 96, 220, 255}},
+};
+
+static constexpr int THEME_COUNT = sizeof(THEMES) / sizeof(THEMES[0]);
 
 static void set_color(SDL_Renderer* renderer, SDL_Color color) {
     SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
@@ -88,11 +100,11 @@ static const char* health_label(const StorageStats& stats) {
     return "OK";
 }
 
-static SDL_Color health_color(const StorageStats& stats) {
+static SDL_Color health_color(const StorageStats& stats, SDL_Color accent) {
     const char* label = health_label(stats);
 
     if (label[0] == 'O') {
-        return COLOR_ACCENT;
+        return accent;
     }
     if (label[0] == 'L') {
         return COLOR_WARN;
@@ -212,9 +224,9 @@ static void fill_rounded_rect(SDL_Renderer* renderer, SDL_Rect rect, int radius,
     }
 }
 
-static void draw_badge(SDL_Renderer* renderer, Fonts* fonts, const StorageStats& stats, int x, int y) {
+static void draw_badge(SDL_Renderer* renderer, Fonts* fonts, const StorageStats& stats, int x, int y, SDL_Color accent) {
     const char* label = health_label(stats);
-    SDL_Color color = health_color(stats);
+    SDL_Color color = health_color(stats, accent);
     int text_w = 0;
     int text_h = 0;
     TTF_SizeUTF8(fonts->small, label, &text_w, &text_h);
@@ -242,14 +254,14 @@ static void draw_progress(SDL_Renderer* renderer, int x, int y, int width, int p
     }
 }
 
-static void draw_storage_panel(SDL_Renderer* renderer, Fonts* fonts, const StorageStats& stats, SDL_Rect panel) {
+static void draw_storage_panel(SDL_Renderer* renderer, Fonts* fonts, const StorageStats& stats, SDL_Rect panel, const Theme& theme) {
     fill_rounded_rect(renderer, panel, 8, COLOR_PANEL);
 
     SDL_Rect top = {panel.x, panel.y, panel.w, 74};
     fill_rounded_rect(renderer, top, 8, COLOR_PANEL_2);
 
     draw_text(renderer, fonts->section, stats.label, panel.x + 32, panel.y + 24, COLOR_TEXT);
-    draw_badge(renderer, fonts, stats, panel.x + panel.w - 170, panel.y + 22);
+    draw_badge(renderer, fonts, stats, panel.x + panel.w - 170, panel.y + 22, theme.accent);
 
     if (!stats.mounted) {
         char error[64];
@@ -280,17 +292,52 @@ static void draw_storage_panel(SDL_Renderer* renderer, Fonts* fonts, const Stora
     snprintf(total_text, sizeof(total_text), "of %.2f GiB total", bytes_to_gib(stats.total));
     snprintf(percent_text, sizeof(percent_text), "%d%%", percent);
 
-    draw_text(renderer, fonts->small, "FREE SPACE", panel.x + 32, panel.y + 114, COLOR_MUTED);
-    draw_text(renderer, fonts->title, free_text, panel.x + 32, panel.y + 142, COLOR_TEXT);
+    draw_text(renderer, fonts->small, "FREE SPACE", panel.x + 32, panel.y + 108, COLOR_MUTED);
+    draw_text(renderer, fonts->title, free_text, panel.x + 32, panel.y + 136, COLOR_TEXT);
     draw_text(renderer, fonts->body, total_text, panel.x + 34, panel.y + 204, COLOR_MUTED);
 
-    draw_text_right(renderer, fonts->section, percent_text, panel.x + panel.w - 32, panel.y + 144, health_color(stats));
+    draw_text_right(renderer, fonts->section, percent_text, panel.x + panel.w - 32, panel.y + 140, health_color(stats, theme.accent));
     draw_text_right(renderer, fonts->small, used_text, panel.x + panel.w - 32, panel.y + 204, COLOR_MUTED);
 
-    draw_progress(renderer, panel.x + 32, panel.y + 260, panel.w - 64, percent, health_color(stats));
+    draw_progress(renderer, panel.x + 32, panel.y + 260, panel.w - 64, percent, health_color(stats, theme.accent));
 }
 
-static void render_dashboard(SDL_Renderer* renderer, Fonts* fonts, int refreshes, const StorageStats& internal, const StorageStats& sd) {
+static void draw_footer_status(SDL_Renderer* renderer, Fonts* fonts, int refreshes, const StorageStats& internal, const StorageStats& sd, const Theme& theme) {
+    SDL_Rect footer = {58, 526, 1164, 104};
+    fill_rounded_rect(renderer, footer, 8, {25, 31, 40, 255});
+
+    char total_text[64] = "Total capacity: unavailable";
+    char free_text[64] = "Free space: unavailable";
+    char used_text[64] = "Used space: unavailable";
+    char refresh[48];
+
+    s64 total = 0;
+    s64 free_space = 0;
+    if (internal.mounted && R_SUCCEEDED(internal.total_result) && R_SUCCEEDED(internal.free_result) && internal.total > 0) {
+        total += internal.total;
+        free_space += internal.free;
+    }
+    if (sd.mounted && R_SUCCEEDED(sd.total_result) && R_SUCCEEDED(sd.free_result) && sd.total > 0) {
+        total += sd.total;
+        free_space += sd.free;
+    }
+
+    if (total > 0) {
+        snprintf(total_text, sizeof(total_text), "Total capacity: %.2f GiB", bytes_to_gib(total));
+        snprintf(free_text, sizeof(free_text), "Free space: %.2f GiB", bytes_to_gib(free_space));
+        snprintf(used_text, sizeof(used_text), "Used space: %.2f GiB", bytes_to_gib(total - free_space));
+    }
+    snprintf(refresh, sizeof(refresh), "Refresh #%d", refreshes);
+
+    draw_text(renderer, fonts->small, total_text, 90, 548, COLOR_TEXT);
+    draw_text(renderer, fonts->small, free_text, 90, 580, COLOR_MUTED);
+    draw_text(renderer, fonts->small, used_text, 410, 548, COLOR_TEXT);
+    draw_text(renderer, fonts->small, "Values use GiB", 410, 580, COLOR_MUTED);
+    draw_text_right(renderer, fonts->body, refresh, 1190, 548, theme.accent);
+    draw_text_right(renderer, fonts->small, "- Change theme", 1190, 580, COLOR_DIM);
+}
+
+static void render_dashboard(SDL_Renderer* renderer, Fonts* fonts, int refreshes, const StorageStats& internal, const StorageStats& sd, const Theme& theme) {
     set_color(renderer, COLOR_BG);
     SDL_RenderClear(renderer);
 
@@ -298,9 +345,7 @@ static void render_dashboard(SDL_Renderer* renderer, Fonts* fonts, int refreshes
     fill_rect(renderer, {0, 96, SCREEN_W, 2}, {61, 72, 88, 255});
 
     char version[64];
-    char refresh[48];
     snprintf(version, sizeof(version), "SpaceVue v%d.%d.%d", VERSION_MAJOR, VERSION_MINOR, VERSION_MICRO);
-    snprintf(refresh, sizeof(refresh), "Refresh #%d", refreshes);
 
     draw_text(renderer, fonts->title, version, 58, 24, COLOR_TEXT);
     draw_text(renderer, fonts->small, "made by estyxq", 60, 62, COLOR_MUTED);
@@ -308,25 +353,20 @@ static void render_dashboard(SDL_Renderer* renderer, Fonts* fonts, int refreshes
 
     SDL_Rect internal_panel = {58, 134, 558, 350};
     SDL_Rect sd_panel = {664, 134, 558, 350};
-    draw_storage_panel(renderer, fonts, internal, internal_panel);
-    draw_storage_panel(renderer, fonts, sd, sd_panel);
+    draw_storage_panel(renderer, fonts, internal, internal_panel, theme);
+    draw_storage_panel(renderer, fonts, sd, sd_panel, theme);
 
-    SDL_Rect footer = {58, 526, 1164, 104};
-    fill_rounded_rect(renderer, footer, 8, {25, 31, 40, 255});
-    draw_text(renderer, fonts->section, "Overview", 90, 556, COLOR_TEXT);
-    draw_text(renderer, fonts->body, "Live storage stats with a lightweight SDL2 interface.", 90, 596, COLOR_MUTED);
-    draw_text_right(renderer, fonts->body, refresh, 1190, 556, COLOR_ACCENT);
-    draw_text_right(renderer, fonts->small, "Values use GiB", 1190, 602, COLOR_DIM);
+    draw_footer_status(renderer, fonts, refreshes, internal, sd, theme);
 
     SDL_RenderPresent(renderer);
 }
 
 static bool load_fonts(Fonts* fonts) {
     const char* font_path = "romfs:/data/LeroyLetteringLightBeta01.ttf";
-    fonts->title = TTF_OpenFont(font_path, 34);
-    fonts->section = TTF_OpenFont(font_path, 24);
-    fonts->body = TTF_OpenFont(font_path, 20);
-    fonts->small = TTF_OpenFont(font_path, 16);
+    fonts->title = TTF_OpenFont(font_path, 38);
+    fonts->section = TTF_OpenFont(font_path, 28);
+    fonts->body = TTF_OpenFont(font_path, 22);
+    fonts->small = TTF_OpenFont(font_path, 18);
 
     return fonts->title && fonts->section && fonts->body && fonts->small;
 }
@@ -398,9 +438,10 @@ int main(int argc, char* argv[]) {
     StorageStats internal = read_internal_storage();
     StorageStats sd = read_sd_storage();
     int refreshes = 1;
+    int theme_index = 0;
     u64 last_refresh = armGetSystemTick();
 
-    render_dashboard(renderer, &fonts, refreshes, internal, sd);
+    render_dashboard(renderer, &fonts, refreshes, internal, sd, THEMES[theme_index]);
 
     while (appletMainLoop()) {
         SDL_Event event;
@@ -425,7 +466,12 @@ int main(int argc, char* argv[]) {
 
         const u64 now = armGetSystemTick();
         const bool manual_refresh = (down & HidNpadButton_A) != 0;
+        const bool theme_change = (down & HidNpadButton_Minus) != 0;
         const bool auto_refresh = armTicksToNs(now - last_refresh) >= REFRESH_INTERVAL_NS;
+
+        if (theme_change) {
+            theme_index = (theme_index + 1) % THEME_COUNT;
+        }
 
         if (manual_refresh || auto_refresh) {
             internal = read_internal_storage();
@@ -434,7 +480,7 @@ int main(int argc, char* argv[]) {
             refreshes++;
         }
 
-        render_dashboard(renderer, &fonts, refreshes, internal, sd);
+        render_dashboard(renderer, &fonts, refreshes, internal, sd, THEMES[theme_index]);
     }
 
     close_fonts(&fonts);
