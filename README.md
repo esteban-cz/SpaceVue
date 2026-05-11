@@ -21,16 +21,15 @@ SpaceVue is a Nintendo Switch homebrew app for quickly checking storage usage on
 1. Open the GitHub repository page for SpaceVue.
 2. Go to the **Releases** tab.
 3. Download the latest release.
-4. If the release is packaged as a `.zip`, extract it.
-5. Copy `SpaceVue.nro` to your Nintendo Switch SD card:
+4. Copy `SpaceVue.nro` to your Nintendo Switch SD card:
 
 ```text
 /switch/SpaceVue.nro
 ```
 
-6. Put the SD card back into your Switch.
-7. Open the Homebrew Menu.
-8. Launch **SpaceVue**.
+5. Put the SD card back into your Switch.
+6. Open the Homebrew Menu.
+7. Launch **SpaceVue**.
 
 ## Controls
 
